@@ -120,7 +120,7 @@ gmail_credentials = {
         "token_uri": "https://oauth2.googleapis.com/token",
         "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
         "client_secret": st.secrets["sec"],
-        "redirect_uris":["http://localhost:8501/"]
+        "redirect_uris":["http://meeting-monitor-k5i6nn5kscxpo7kbhhvjt4.streamlit.app"]
     }
 }
 
