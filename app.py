@@ -136,7 +136,7 @@ def start_auth_flow():
     flow = InstalledAppFlow.from_client_secrets_file(
         CREDENTIALS_FILE, 
         SCOPES, 
-        redirect_uri=""http://meeting-monitor-k5i6nn5kscxpo7kbhhvjt4.streamlit.app"
+        redirect_uri="http://meeting-monitor-k5i6nn5kscxpo7kbhhvjt4.streamlit.app"
     )
     
     # Generate the authorization URL
