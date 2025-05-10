@@ -842,7 +842,7 @@ with tab3:
                 email, name = example_email
                 
                 st.markdown("### Summary Email Preview")
-                email_content = generate_summary_email(st.session_state.summary, name)
+                email_content = generate_task_email(st.session_state.summary, name)
                 st.components.v1.html(email_content, height=500, scrolling=True)
                 
                 st.markdown(f"This summary will be sent to all {len(email_to_name)} participants.")
@@ -856,7 +856,7 @@ with tab3:
                         progress_bar = st.progress(0)
                         
                         for i, (email, name) in enumerate(email_to_name.items()):
-                            email_content = generate_summary_email(st.session_state.summary, name)
+                            email_content = generate_task_email(st.session_state.summary, name)
                             
                             success, result = send_email(
                                 st.session_state.service, 
