@@ -883,50 +883,48 @@ with tab3:
                 
         # If we have tasks, show the original task-based email interface
         elif has_tasks:
-            # Create email preview tabs
-            email_tabs = st.tabs([f"{name} ({email})" for email, name in email_to_name.items()])
+            ## Create email preview tabs
+             email_tabs = st.tabs([f"{name} ({email})" for email, name in email_to_name.items()])
+    
+    for i, (email, tasks) in enumerate(tasks_by_email.items()):
+        with email_tabs[i]:
+            name = email_to_name[email]
+            # UPDATED: Using generate_task_email instead of generate_summary_email
+            email_content = generate_task_email(st.session_state.summary, tasks, name)
+            
+            st.markdown("### Email Preview")
+            st.components.v1.html(email_content, height=500, scrolling=True)
+    
+    # Send all emails button
+    if st.button("Send All Task Emails"):
+        success_count = 0
+        error_count = 0
+        
+        with st.spinner("Sending emails to participants..."):
+            progress_bar = st.progress(0)
             
             for i, (email, tasks) in enumerate(tasks_by_email.items()):
-                with email_tabs[i]:
-                    name = email_to_name[email]
-                    email_content = generate_summary_email(st.session_state.summary, tasks, name)
-                    
-                    st.markdown("### Email Preview")
-                    st.components.v1.html(email_content, height=500, scrolling=True)
-            
-            # Send all emails button
-            if st.button("Send All Task Emails"):
-                success_count = 0
-                error_count = 0
+                name = email_to_name[email]
+                # UPDATED: Using generate_task_email instead of generate_summary_email
+                email_content = generate_task_email(st.session_state.summary, tasks, name)
                 
-                with st.spinner("Sending emails to participants..."):
-                    progress_bar = st.progress(0)
-                    
-                    for i, (email, tasks) in enumerate(tasks_by_email.items()):
-                        name = email_to_name[email]
-                        email_content = generate_summary_email(st.session_state.summary, tasks, name)
-                        
-                        success, result = send_email(
-                            st.session_state.service, 
-                            email, 
-                            "Meeting Action Items", 
-                            email_content
-                        )
-                        
-                        if success:
-                            success_count += 1
-                        else:
-                            error_count += 1
-                        
-                        # Update progress bar
-                        progress_bar.progress((i + 1) / len(tasks_by_email))
-                    
-                    if success_count > 0:
-                        st.success(f"✅ Successfully sent {success_count} emails")
-                    
-                    if error_count > 0:
-                        st.error(f"❌ Failed to send {error_count} emails")
-        else:
-            st.warning("No tasks identified and no participant list provided. Please upload a participant list to send the summary.")
-    else:
-        st.info("Please analyze the meeting transcript in the Analysis & Tasks tab before sending emails.")
+                success, result = send_email(
+                    st.session_state.service, 
+                    email, 
+                    "Meeting Action Items", 
+                    email_content
+                )
+                
+                if success:
+                    success_count += 1
+                else:
+                    error_count += 1
+                
+                # Update progress bar
+                progress_bar.progress((i + 1) / len(tasks_by_email))
+            
+            if success_count > 0:
+                st.success(f"✅ Successfully sent {success_count} emails")
+            
+            if error_count > 0:
+                st.error(f"❌ Failed to send {error_count} emails")
