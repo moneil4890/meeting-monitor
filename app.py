@@ -794,7 +794,6 @@ with tab2:
         st.info("Please upload both a meeting transcript and participants list in the Upload Files tab.")
 # The error is occurring because we're trying to enumerate tasks_by_email before it's fully defined
 # Here's how to fix the entire Send Emails Tab section to prevent this error
-
 # Send Emails Tab
 with tab3:
     st.header("Send Meeting Information to Participants")
@@ -809,11 +808,19 @@ with tab3:
         tasks_by_email = {}
         email_to_name = {}
         
-        # Group tasks by assignee email if tasks exist
+        # First, create a mapping of all participants' emails regardless of tasks
+        if st.session_state.participants:
+            for participant in st.session_state.participants:
+                email = participant.get("email", "")
+                name = participant.get("name", "")
+                
+                if email and "@" in email:
+                    email_to_name[email] = name
+        
+        # Then, group tasks by assignee email if tasks exist
         if st.session_state.tasks and "tasks" in st.session_state.tasks and st.session_state.tasks["tasks"]:
             for task in st.session_state.tasks["tasks"]:
                 email = task.get("email", "")
-                assignee = task.get("assignee", "Unassigned")
                 
                 # Skip if email is empty or invalid
                 if not email or "@" not in email:
@@ -822,119 +829,64 @@ with tab3:
                 if email not in tasks_by_email:
                     tasks_by_email[email] = []
                 tasks_by_email[email].append(task)
-                email_to_name[email] = assignee
         
-        # Check if we have any valid tasks with emails
-        has_tasks = bool(tasks_by_email)
-        
-        # For summary-only emails (when no tasks were found)
-        if not has_tasks and st.session_state.participants:
-            st.info("No specific tasks were identified in the transcript. You can still send the meeting summary to all participants.")
+        # Check if we have any valid participants
+        if email_to_name:
+            # Create tabs for all participants
+            email_tabs = st.tabs([f"{name} ({email})" for email, name in email_to_name.items()])
             
-            # Create a mapping of all participants' emails
-            for participant in st.session_state.participants:
-                email = participant.get("email", "")
-                name = participant.get("name", "")
-                
-                if email and "@" in email:
-                    email_to_name[email] = name
-            
-            # Preview summary-only email
-            if email_to_name:
-                example_email = next(iter(email_to_name.items()))
-                email, name = example_email
-                
-                st.markdown("### Summary Email Preview")
-                email_content = generate_summary_email(st.session_state.summary, name)
-                st.components.v1.html(email_content, height=500, scrolling=True)
-                
-                st.markdown(f"This summary will be sent to all {len(email_to_name)} participants.")
-                
-                # Send all summary emails button
-                if st.button("Send Summary to All Participants"):
-                    success_count = 0
-                    error_count = 0
+            for i, (email, name) in enumerate(email_to_name.items()):
+                with email_tabs[i]:
+                    # Check if this participant has tasks
+                    if email in tasks_by_email and tasks_by_email[email]:
+                        # They have tasks, show task email
+                        email_content = generate_task_email(st.session_state.summary, tasks_by_email[email], name)
+                        st.markdown("### Email Preview (with Tasks)")
+                    else:
+                        # No tasks, show summary-only email
+                        email_content = generate_summary_email(st.session_state.summary, name)
+                        st.markdown("### Email Preview (Summary Only)")
                     
-                    with st.spinner("Sending emails to participants..."):
-                        progress_bar = st.progress(0)
-                        
-                        for i, (email, name) in enumerate(email_to_name.items()):
+                    st.components.v1.html(email_content, height=500, scrolling=True)
+            
+            # Send all emails button
+            if st.button("Send All Emails"):
+                success_count = 0
+                error_count = 0
+                
+                with st.spinner("Sending emails to participants..."):
+                    progress_bar = st.progress(0)
+                    
+                    for i, (email, name) in enumerate(email_to_name.items()):
+                        # Choose email type based on whether they have tasks
+                        if email in tasks_by_email and tasks_by_email[email]:
+                            email_content = generate_task_email(st.session_state.summary, tasks_by_email[email], name)
+                            subject = "Meeting Action Items"
+                        else:
                             email_content = generate_summary_email(st.session_state.summary, name)
-                            
-                            success, result = send_email(
-                                st.session_state.service, 
-                                email, 
-                                "Meeting Summary", 
-                                email_content
-                            )
-                            
-                            if success:
-                                success_count += 1
-                            else:
-                                error_count += 1
-                            
-                            # Update progress bar
-                            progress_bar.progress((i + 1) / len(email_to_name))
+                            subject = "Meeting Summary"
                         
-                        if success_count > 0:
-                            st.success(f"✅ Successfully sent {success_count} summary emails")
+                        success, result = send_email(
+                            st.session_state.service, 
+                            email, 
+                            subject, 
+                            email_content
+                        )
                         
-                        if error_count > 0:
-                            st.error(f"❌ Failed to send {error_count} emails")
-            else:
-                st.warning("No valid participant email addresses found. Please check your participants file.")
-                
-        # If we have tasks, show the original task-based email interface
-        elif has_tasks:
-            # Create email preview tabs - if tasks_by_email exists and has items
-            if tasks_by_email and email_to_name:
-                email_tabs = st.tabs([f"{name} ({email})" for email, name in email_to_name.items()])
-                
-                for i, (email, tasks) in enumerate(tasks_by_email.items()):
-                    with email_tabs[i]:
-                        name = email_to_name[email]
-                        # Changed from generate_summary_email to generate_task_email
-                        email_content = generate_task_email(st.session_state.summary, tasks, name)
+                        if success:
+                            success_count += 1
+                        else:
+                            error_count += 1
                         
-                        st.markdown("### Email Preview")
-                        st.components.v1.html(email_content, height=500, scrolling=True)
-                
-                # Send all emails button
-                if st.button("Send All Task Emails"):
-                    success_count = 0
-                    error_count = 0
+                        # Update progress bar
+                        progress_bar.progress((i + 1) / len(email_to_name))
                     
-                    with st.spinner("Sending emails to participants..."):
-                        progress_bar = st.progress(0)
-                        
-                        for i, (email, tasks) in enumerate(tasks_by_email.items()):
-                            name = email_to_name[email]
-                            # Changed from generate_summary_email to generate_task_email
-                            email_content = generate_task_email(st.session_state.summary, tasks, name)
-                            
-                            success, result = send_email(
-                                st.session_state.service, 
-                                email, 
-                                "Meeting Action Items", 
-                                email_content
-                            )
-                            
-                            if success:
-                                success_count += 1
-                            else:
-                                error_count += 1
-                            
-                            # Update progress bar
-                            progress_bar.progress((i + 1) / len(tasks_by_email))
-                        
-                        if success_count > 0:
-                            st.success(f"✅ Successfully sent {success_count} emails")
-                        
-                        if error_count > 0:
-                            st.error(f"❌ Failed to send {error_count} emails")
-            else:
-                st.warning("No valid tasks with email addresses found. Please check your task assignments.")
+                    if success_count > 0:
+                        st.success(f"✅ Successfully sent {success_count} emails")
+                    
+                    if error_count > 0:
+                        st.error(f"❌ Failed to send {error_count} emails")
         else:
-            st.warning("No tasks identified and no participant list provided. Please upload a participant list to send the summary.")
+            st.warning("No valid participant email addresses found. Please check your participants file.")
     else:
         st.info("Please analyze the meeting transcript in the Analysis & Tasks tab before sending emails.")
