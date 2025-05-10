@@ -333,8 +333,8 @@ def read_participants(uploaded_file):
     except Exception as e:
         st.error(f"Error reading participants file: {str(e)}")
         return None
+# Modified functions for improved meeting transcript analysis
 
-# AI functions for meeting transcript analysis
 def generate_meeting_summary(transcript):
     if not transcript:
         return "No transcript provided for summarization."
@@ -352,7 +352,7 @@ def generate_meeting_summary(transcript):
     except Exception as e:
         return f"Error generating meeting summary: {str(e)}"
 
-# FIXED task extraction to properly use participant emails
+# Modified task extraction to avoid creating artificial tasks
 def extract_tasks_and_assign(transcript, participants):
     if not transcript or not participants:
         return "Missing transcript or participants list for task extraction."
@@ -366,8 +366,25 @@ def extract_tasks_and_assign(transcript, participants):
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a professional assistant that identifies tasks from meeting transcripts and assigns them to the most appropriate team member based on their expertise. Always use their exact email address as provided."},
-                {"role": "user", "content": f"Based on the meeting transcript below, identify all tasks and action items, then assign each task to the most appropriate team member based on their expertise. Format your response as a JSON array with objects containing 'task', 'assignee', 'email', and 'due_date' (estimate a reasonable due date based on the task). IMPORTANT: Use the exact email address provided for each person.\n\nMeeting Transcript:\n{transcript}\n\nTeam Members and their expertise:\n{participant_info}"}
+                {"role": "system", "content": """You are a professional assistant that identifies ONLY explicitly mentioned tasks from meeting transcripts.
+                IMPORTANT: Do not invent or infer tasks that aren't clearly stated. If no tasks are mentioned, return an empty list.
+                Only assign tasks to people who are explicitly mentioned in the transcript. If a task is mentioned but no clear assignee, mark it as 'Unassigned'."""},
+                {"role": "user", "content": f"""Based on the meeting transcript below, identify ONLY explicitly mentioned tasks and action items.
+                ONLY assign each task to a team member if they are EXPLICITLY mentioned as responsible in the transcript.
+                If no tasks are mentioned in the transcript, return an empty tasks array.
+                If tasks exist but no clear assignee is mentioned, use 'Unassigned' as the assignee.
+                
+                Format your response as a JSON object with a 'tasks' array. Each task should include:
+                - 'task': The specific action item mentioned
+                - 'assignee': The person explicitly assigned to the task (or 'Unassigned')
+                - 'email': Leave blank, will be filled programmatically
+                - 'due_date': Only if explicitly mentioned, otherwise leave as 'Not specified'
+                
+                Meeting Transcript:
+                {transcript}
+                
+                Team Members and their expertise:
+                {participant_info}"""}
             ],
             max_tokens=1000,
             response_format={"type": "json_object"}
@@ -375,36 +392,28 @@ def extract_tasks_and_assign(transcript, participants):
         
         result = json.loads(response.choices[0].message.content)
         
-        # Make sure the result contains a "tasks" property that is a list
-        if "tasks" not in result or not isinstance(result["tasks"], list):
-            # If not properly formatted, try to fix or create a default structure
-            if isinstance(result, list):
-                return {"tasks": result}
-            else:
-                tasks = []
-                for key, value in result.items():
-                    if isinstance(value, dict) and "task" in value:
-                        tasks.append(value)
-                    elif isinstance(value, list):
-                        tasks.extend(value)
-                return {"tasks": tasks if tasks else [{"task": "No clear tasks identified", "assignee": "Unassigned", "email": "", "due_date": ""}]}
+        # Ensure we have a "tasks" property that is a list
+        if "tasks" not in result:
+            result = {"tasks": []}
         
-        # Ensure emails in tasks match those from participant list
-        email_map = {p['name'].lower(): p['email'] for p in participants}
+        # Match emails to assignees based on participant list
+        name_to_email = {p['name'].lower(): p['email'] for p in participants}
         
         for task in result["tasks"]:
-            assignee = task.get("assignee", "")
-            # Try to match assignee with participant and use correct email
-            if assignee.lower() in email_map:
-                task["email"] = email_map[assignee.lower()]
+            assignee = task.get("assignee", "Unassigned")
+            # Only match if the assignee name appears in participant list
+            if assignee.lower() in name_to_email:
+                task["email"] = name_to_email[assignee.lower()]
+            else:
+                task["email"] = ""  # Empty email for unassigned tasks
         
         return result
     except Exception as e:
         st.error(f"Error extracting tasks: {str(e)}")
-        return {"tasks": [{"task": "Error extracting tasks", "assignee": "Unassigned", "email": "", "due_date": ""}]}
+        return {"tasks": []}
 
-# Generate email content with HTML formatting
-def generate_email_content(summary, tasks_for_person, person_name):
+# New function to generate summary-only email content
+def generate_summary_email(summary, person_name):
     html = f"""
     <html>
     <head>
@@ -434,15 +443,6 @@ def generate_email_content(summary, tasks_for_person, person_name):
                 border-left: 5px solid #3B82F6;
                 margin-bottom: 20px;
             }}
-            .tasks {{
-                background-color: #F3F4F6;
-            }}
-            .task {{
-                padding: 10px 15px;
-                margin-bottom: 10px;
-                border-left: 5px solid #10B981;
-                background-color: white;
-            }}
             .footer {{
                 text-align: center;
                 padding: 15px;
@@ -454,34 +454,17 @@ def generate_email_content(summary, tasks_for_person, person_name):
     </head>
     <body>
         <div class="header">
-            <h2>Meeting Action Items</h2>
+            <h2>Meeting Summary</h2>
         </div>
         <div class="content">
             <p>Hello {person_name},</p>
             
-            <p>Below you'll find a summary of our recent meeting and the tasks assigned to you.</p>
+            <p>Below you'll find a summary of our recent meeting.</p>
             
             <h3>Meeting Summary</h3>
             <div class="summary">
                 {summary.replace('\n', '<br>')}
             </div>
-            
-            <h3>Your Tasks</h3>
-            <div class="tasks">
-    """
-    
-    for task in tasks_for_person:
-        html += f"""
-                <div class="task">
-                    <strong>Task:</strong> {task['task']}<br>
-                    <strong>Due Date:</strong> {task['due_date']}
-                </div>
-        """
-    
-    html += f"""
-            </div>
-            
-            <p>Please let me know if you have any questions about these tasks.</p>
             
             <p>Best regards,<br>Meeting Coordinator</p>
         </div>
@@ -663,75 +646,135 @@ with tab2:
             st.markdown(f'<div class="summary-box">{st.session_state.summary}</div>', unsafe_allow_html=True)
         
         if st.session_state.tasks and "tasks" in st.session_state.tasks:
-            st.subheader("Task Assignments")
-            
-            # Group tasks by assignee
-            tasks_by_assignee = {}
-            for task in st.session_state.tasks["tasks"]:
-                assignee = task.get("assignee", "Unassigned")
-                if assignee not in tasks_by_assignee:
-                    tasks_by_assignee[assignee] = []
-                tasks_by_assignee[assignee].append(task)
-            
-            # Display tasks by assignee
-            for assignee, tasks in tasks_by_assignee.items():
-                with st.expander(f"{assignee} - {len(tasks)} tasks"):
-                    for task in tasks:
-                        st.markdown(f"""
-                        <div class="task-box">
-                            <strong>Task:</strong> {task.get('task', 'No description')}<br>
-                            <strong>Due Date:</strong> {task.get('due_date', 'Not specified')}
-                        </div>
-                        """, unsafe_allow_html=True)
+            if not st.session_state.tasks["tasks"]:
+                st.info("No explicit tasks or action items were identified in this meeting transcript.")
+            else:
+                st.subheader("Task Assignments")
+                
+                # Group tasks by assignee
+                tasks_by_assignee = {}
+                for task in st.session_state.tasks["tasks"]:
+                    assignee = task.get("assignee", "Unassigned")
+                    if assignee not in tasks_by_assignee:
+                        tasks_by_assignee[assignee] = []
+                    tasks_by_assignee[assignee].append(task)
+                
+                # Display tasks by assignee
+                for assignee, tasks in tasks_by_assignee.items():
+                    with st.expander(f"{assignee} - {len(tasks)} tasks"):
+                        for task in tasks:
+                            st.markdown(f"""
+                            <div class="task-box">
+                                <strong>Task:</strong> {task.get('task', 'No description')}<br>
+                                <strong>Due Date:</strong> {task.get('due_date', 'Not specified')}
+                            </div>
+                            """, unsafe_allow_html=True)
     else:
         st.info("Please upload both a meeting transcript and participants list in the Upload Files tab.")
 
 # Send Emails Tab
 with tab3:
-    st.header("Send Task Emails to Participants")
+    st.header("Send Meeting Information to Participants")
     
     if not st.session_state.authenticated:
         st.warning("Please authenticate with Gmail in the sidebar to enable email sending.")
     
-    elif st.session_state.summary and st.session_state.tasks and "tasks" in st.session_state.tasks:
+    elif st.session_state.summary:
         st.subheader("Preview and Send Emails")
         
-        # Group tasks by assignee email - FIXED to use actual emails from participants
+        # Group tasks by assignee email if tasks exist
         tasks_by_email = {}
         email_to_name = {}
         
-        for task in st.session_state.tasks["tasks"]:
-            email = task.get("email", "")
-            assignee = task.get("assignee", "Unassigned")
-            
-            # Skip if email is empty or invalid
-            if not email or "@" not in email:
-                continue
+        if st.session_state.tasks and "tasks" in st.session_state.tasks and st.session_state.tasks["tasks"]:
+            for task in st.session_state.tasks["tasks"]:
+                email = task.get("email", "")
+                assignee = task.get("assignee", "Unassigned")
                 
-            if email not in tasks_by_email:
-                tasks_by_email[email] = []
-            tasks_by_email[email].append(task)
-            email_to_name[email] = assignee
+                # Skip if email is empty or invalid
+                if not email or "@" not in email:
+                    continue
+                    
+                if email not in tasks_by_email:
+                    tasks_by_email[email] = []
+                tasks_by_email[email].append(task)
+                email_to_name[email] = assignee
         
-        # Preview emails
-        if tasks_by_email:
+        # Check if we have any valid tasks with emails
+        has_tasks = bool(tasks_by_email)
+        
+        # For summary-only emails (when no tasks were found)
+        if not has_tasks and st.session_state.participants:
+            st.info("No specific tasks were identified in the transcript. You can still send the meeting summary to all participants.")
+            
+            # Create a mapping of all participants' emails
+            for participant in st.session_state.participants:
+                email = participant.get("email", "")
+                name = participant.get("name", "")
+                
+                if email and "@" in email:
+                    email_to_name[email] = name
+            
+            # Preview summary-only email
+            if email_to_name:
+                example_email = next(iter(email_to_name.items()))
+                email, name = example_email
+                
+                st.markdown("### Summary Email Preview")
+                email_content = generate_summary_email(st.session_state.summary, name)
+                st.components.v1.html(email_content, height=500, scrolling=True)
+                
+                st.markdown(f"This summary will be sent to all {len(email_to_name)} participants.")
+                
+                # Send all summary emails button
+                if st.button("Send Summary to All Participants"):
+                    success_count = 0
+                    error_count = 0
+                    
+                    with st.spinner("Sending emails to participants..."):
+                        progress_bar = st.progress(0)
+                        
+                        for i, (email, name) in enumerate(email_to_name.items()):
+                            email_content = generate_summary_email(st.session_state.summary, name)
+                            
+                            success, result = send_email(
+                                st.session_state.service, 
+                                email, 
+                                "Meeting Summary", 
+                                email_content
+                            )
+                            
+                            if success:
+                                success_count += 1
+                            else:
+                                error_count += 1
+                            
+                            # Update progress bar
+                            progress_bar.progress((i + 1) / len(email_to_name))
+                        
+                        if success_count > 0:
+                            st.success(f"✅ Successfully sent {success_count} summary emails")
+                        
+                        if error_count > 0:
+                            st.error(f"❌ Failed to send {error_count} emails")
+            else:
+                st.warning("No valid participant email addresses found. Please check your participants file.")
+                
+        # If we have tasks, show the original task-based email interface
+        elif has_tasks:
             # Create email preview tabs
             email_tabs = st.tabs([f"{name} ({email})" for email, name in email_to_name.items()])
             
             for i, (email, tasks) in enumerate(tasks_by_email.items()):
                 with email_tabs[i]:
                     name = email_to_name[email]
-                    email_content = generate_email_content(st.session_state.summary, tasks, name)
+                    email_content = generate_summary_email(st.session_state.summary, tasks, name)
                     
                     st.markdown("### Email Preview")
                     st.components.v1.html(email_content, height=500, scrolling=True)
             
-            # Show warning if no valid tasks with emails were found
-            if not tasks_by_email:
-                st.warning("No tasks with valid email addresses were found. Please make sure the email addresses in your participants file are correct.")
-            
             # Send all emails button
-            if st.button("Send All Emails"):
+            if st.button("Send All Task Emails"):
                 success_count = 0
                 error_count = 0
                 
@@ -740,7 +783,7 @@ with tab3:
                     
                     for i, (email, tasks) in enumerate(tasks_by_email.items()):
                         name = email_to_name[email]
-                        email_content = generate_email_content(st.session_state.summary, tasks, name)
+                        email_content = generate_summary_email(st.session_state.summary, tasks, name)
                         
                         success, result = send_email(
                             st.session_state.service, 
@@ -763,10 +806,6 @@ with tab3:
                     if error_count > 0:
                         st.error(f"❌ Failed to send {error_count} emails")
         else:
-            st.info("No tasks with valid email addresses were found.")
+            st.warning("No tasks identified and no participant list provided. Please upload a participant list to send the summary.")
     else:
         st.info("Please analyze the meeting transcript in the Analysis & Tasks tab before sending emails.")
-
-# Footer
-st.markdown("---")
-st.markdown("<div style='text-align: center; color: gray; font-size: 0.8em;'>Meeting Minutes Analyzer - Built with Streamlit, Gmail API, and OpenAI</div>", unsafe_allow_html=True)
