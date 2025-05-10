@@ -704,94 +704,33 @@ with tab2:
 
 # Send Emails Tab
 with tab3:
-    st.header("Send Meeting Information to Participants")
+    st.header("Send Task Emails to Participants")
     
     if not st.session_state.authenticated:
         st.warning("Please authenticate with Gmail in the sidebar to enable email sending.")
     
-    elif st.session_state.summary:
+    elif st.session_state.summary and st.session_state.tasks and "tasks" in st.session_state.tasks:
         st.subheader("Preview and Send Emails")
         
-        # Group tasks by assignee email if tasks exist
+        # Group tasks by assignee email - FIXED to use actual emails from participants
         tasks_by_email = {}
         email_to_name = {}
         
-        if st.session_state.tasks and "tasks" in st.session_state.tasks and st.session_state.tasks["tasks"]:
-            for task in st.session_state.tasks["tasks"]:
-                email = task.get("email", "")
-                assignee = task.get("assignee", "Unassigned")
-                
-                # Skip if email is empty or invalid
-                if not email or "@" not in email:
-                    continue
-                    
-                if email not in tasks_by_email:
-                    tasks_by_email[email] = []
-                tasks_by_email[email].append(task)
-                email_to_name[email] = assignee
-        
-        # Check if we have any valid tasks with emails
-        has_tasks = bool(tasks_by_email)
-        
-        # For summary-only emails (when no tasks were found)
-        if not has_tasks and st.session_state.participants:
-            st.info("No specific tasks were identified in the transcript. You can still send the meeting summary to all participants.")
+        for task in st.session_state.tasks["tasks"]:
+            email = task.get("email", "")
+            assignee = task.get("assignee", "Unassigned")
             
-            # Create a mapping of all participants' emails
-            for participant in st.session_state.participants:
-                email = participant.get("email", "")
-                name = participant.get("name", "")
+            # Skip if email is empty or invalid
+            if not email or "@" not in email:
+                continue
                 
-                if email and "@" in email:
-                    email_to_name[email] = name
-            
-            # Preview summary-only email
-            if email_to_name:
-                example_email = next(iter(email_to_name.items()))
-                email, name = example_email
-                
-                st.markdown("### Summary Email Preview")
-                email_content = generate_summary_email(st.session_state.summary, name)
-                st.components.v1.html(email_content, height=500, scrolling=True)
-                
-                st.markdown(f"This summary will be sent to all {len(email_to_name)} participants.")
-                
-                # Send all summary emails button
-                if st.button("Send Summary to All Participants"):
-                    success_count = 0
-                    error_count = 0
-                    
-                    with st.spinner("Sending emails to participants..."):
-                        progress_bar = st.progress(0)
-                        
-                        for i, (email, name) in enumerate(email_to_name.items()):
-                            email_content = generate_summary_email(st.session_state.summary, name)
-                            
-                            success, result = send_email(
-                                st.session_state.service, 
-                                email, 
-                                "Meeting Summary", 
-                                email_content
-                            )
-                            
-                            if success:
-                                success_count += 1
-                            else:
-                                error_count += 1
-                            
-                            # Update progress bar
-                            progress_bar.progress((i + 1) / len(email_to_name))
-                        
-                        if success_count > 0:
-                            st.success(f"✅ Successfully sent {success_count} summary emails")
-                        
-                        if error_count > 0:
-                            st.error(f"❌ Failed to send {error_count} emails")
-            else:
-                st.warning("No valid participant email addresses found. Please check your participants file.")
-                
-        # If we have tasks, show the original task-based email interface
-        elif has_tasks:
+            if email not in tasks_by_email:
+                tasks_by_email[email] = []
+            tasks_by_email[email].append(task)
+            email_to_name[email] = assignee
+        
+        # Preview emails
+        if tasks_by_email:
             # Create email preview tabs
             email_tabs = st.tabs([f"{name} ({email})" for email, name in email_to_name.items()])
             
@@ -803,8 +742,12 @@ with tab3:
                     st.markdown("### Email Preview")
                     st.components.v1.html(email_content, height=500, scrolling=True)
             
+            # Show warning if no valid tasks with emails were found
+            if not tasks_by_email:
+                st.warning("No tasks with valid email addresses were found. Please make sure the email addresses in your participants file are correct.")
+            
             # Send all emails button
-            if st.button("Send All Task Emails"):
+            if st.button("Send All Emails"):
                 success_count = 0
                 error_count = 0
                 
@@ -836,6 +779,10 @@ with tab3:
                     if error_count > 0:
                         st.error(f"❌ Failed to send {error_count} emails")
         else:
-            st.warning("No tasks identified and no participant list provided. Please upload a participant list to send the summary.")
+            st.info("No tasks with valid email addresses were found.")
     else:
         st.info("Please analyze the meeting transcript in the Analysis & Tasks tab before sending emails.")
+
+# Footer
+st.markdown("---")
+st.markdown("<div style='text-align: center; color: gray; font-size: 0.8em;'>Meeting Minutes Analyzer - Built with Streamlit, Gmail API, and OpenAI</div>", unsafe_allow_html=True)
