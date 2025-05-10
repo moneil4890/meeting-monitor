@@ -355,11 +355,20 @@ def generate_meeting_summary(transcript):
 # Modified task extraction to avoid creating artificial tasks
 def extract_tasks_and_assign(transcript, participants):
     if not transcript or not participants:
-        return "Missing transcript or participants list for task extraction."
+        return {"tasks": []}
     
-    # Prepare participant information for the AI with emails
+    # Create a set of lowercase participant names for strict matching
+    participant_names = {p['name'].lower() for p in participants}
+    
+    # Create a mapping of name to email and expertise
     participant_info = ""
+    name_to_email = {}
+    name_to_expertise = {}
+    
     for p in participants:
+        name_lower = p['name'].lower()
+        name_to_email[name_lower] = p['email']
+        name_to_expertise[name_lower] = p['expertise']
         participant_info += f"- {p['name']}: {p['expertise']}, Email: {p['email']}\n"
     
     try:
@@ -367,24 +376,35 @@ def extract_tasks_and_assign(transcript, participants):
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": """You are a professional assistant that identifies ONLY explicitly mentioned tasks from meeting transcripts.
-                IMPORTANT: Do not invent or infer tasks that aren't clearly stated. If no tasks are mentioned, return an empty list.
-                Only assign tasks to people who are explicitly mentioned in the transcript. If a task is mentioned but no clear assignee, mark it as 'Unassigned'."""},
+                
+                STRICT RULES:
+                1. ONLY extract tasks that are EXPLICITLY mentioned in the transcript.
+                2. NEVER invent, infer, or create tasks that aren't clearly stated in the transcript.
+                3. ONLY assign tasks to people who are EXPLICITLY mentioned as responsible in the transcript AND appear in the provided participant list.
+                4. If a task exists but has no clear assignee, mark it as 'Unassigned'.
+                5. If no tasks are mentioned at all, return an empty tasks array.
+                6. Do not try to be helpful by creating tasks - only report what's in the transcript."""},
+                
                 {"role": "user", "content": f"""Based on the meeting transcript below, identify ONLY explicitly mentioned tasks and action items.
-                ONLY assign each task to a team member if they are EXPLICITLY mentioned as responsible in the transcript.
-                If no tasks are mentioned in the transcript, return an empty tasks array.
-                If tasks exist but no clear assignee is mentioned, use 'Unassigned' as the assignee.
+                
+                IMPORTANT CONSTRAINTS:
+                - Task extraction should be CONSERVATIVE - only include tasks with clear action verbs and deliverables.
+                - A person can only be assigned a task if they are EXPLICITLY mentioned as responsible AND they appear in the team member list below.
+                - Return a COMPLETELY EMPTY tasks array if no explicit tasks are mentioned.
                 
                 Format your response as a JSON object with a 'tasks' array. Each task should include:
-                - 'task': The specific action item mentioned
-                - 'assignee': The person explicitly assigned to the task (or 'Unassigned')
-                - 'email': Leave blank, will be filled programmatically
-                - 'due_date': Only if explicitly mentioned, otherwise leave as 'Not specified'
+                - 'task': The specific action item mentioned (verbatim from transcript when possible)
+                - 'assignee': The person explicitly assigned (must match a name in team list) or 'Unassigned'
+                - 'due_date': Only if explicitly mentioned with a specific date, otherwise 'Not specified'
+                - 'context': Short quote from transcript showing where task was mentioned
                 
                 Meeting Transcript:
                 {transcript}
                 
-                Team Members and their expertise:
-                {participant_info}"""}
+                Team Members (ONLY these people can be assigned tasks):
+                {participant_info}
+                
+                If someone is mentioned in the transcript but isn't in this team list, DO NOT assign tasks to them."""}
             ],
             max_tokens=1000,
             response_format={"type": "json_object"}
@@ -393,23 +413,33 @@ def extract_tasks_and_assign(transcript, participants):
         result = json.loads(response.choices[0].message.content)
         
         # Ensure we have a "tasks" property that is a list
-        if "tasks" not in result:
+        if "tasks" not in result or not isinstance(result["tasks"], list):
             result = {"tasks": []}
         
-        # Match emails to assignees based on participant list
-        name_to_email = {p['name'].lower(): p['email'] for p in participants}
-        
+        # Validation step: only keep tasks assigned to actual participants
+        validated_tasks = []
         for task in result["tasks"]:
-            assignee = task.get("assignee", "Unassigned")
-            # Only match if the assignee name appears in participant list
-            if assignee.lower() in name_to_email:
-                task["email"] = name_to_email[assignee.lower()]
-            else:
-                task["email"] = ""  # Empty email for unassigned tasks
+            # Convert assignee to lowercase for comparison
+            assignee_lower = task.get("assignee", "").lower()
+            
+            # Check if:
+            # 1. The task has actual content
+            # 2. Either the assignee is "Unassigned" or matches someone in our participant list
+            if task.get("task", "").strip() and (
+                assignee_lower == "unassigned" or assignee_lower in participant_names
+            ):
+                # Add email based on participant list
+                if assignee_lower in name_to_email:
+                    task["email"] = name_to_email[assignee_lower]
+                else:
+                    task["email"] = ""
+                
+                validated_tasks.append(task)
         
-        return result
+        return {"tasks": validated_tasks}
+    
     except Exception as e:
-        st.error(f"Error extracting tasks: {str(e)}")
+        print(f"Error extracting tasks: {str(e)}")
         return {"tasks": []}
 
 # New function to generate summary-only email content
